@@ -23,7 +23,7 @@ logger = logging.getLogger("parti_archiver")
 
 # Constants
 DELAY = 15  # Seconds between checks for stream status
-CHAT_SHUTDOWN_TIMEOUT = 60  # Allow up to 60 seconds for chat thread to shut down
+CHAT_SHUTDOWN_TIMEOUT = 20  # Reduced from 60s to 20s since we've improved chat shutdown
 MAX_OFFLINE_CHECKS = 3  # Number of consecutive offline checks before considering stream ended
 
 def archive_stream(parti_url):
@@ -66,8 +66,8 @@ def archive_stream(parti_url):
                     logger.info("Download completed, will stop chat collection soon...")
                     download_complete.set()
                     
-                    # Give chat thread a few more seconds to collect final messages
-                    time.sleep(5)
+                    # Send stop signal immediately
+                    # (The chat module now has its own grace period logic)
                     stop_event.set()
                     logger.info("Stop signal sent to chat thread")
                 
@@ -87,12 +87,14 @@ def archive_stream(parti_url):
                 # Create and start threads for video download and chat collection
                 dl_thread = threading.Thread(
                     target=download_thread_fn,
-                    name="VideoDownload"
+                    name="VideoDownload",
+                    daemon=True  # Mark as daemon so it doesn't prevent program exit
                 )
                 chat_thread = threading.Thread(
                     target=parti_chat, 
                     args=(platform, username, stream_dir, stop_event),
-                    name="ChatCollection"
+                    name="ChatCollection",
+                    daemon=True  # Mark as daemon so it doesn't prevent program exit
                 )
                 
                 threads = [dl_thread, chat_thread]
@@ -105,13 +107,16 @@ def archive_stream(parti_url):
                 try:
                     # Wait for download to complete (which will then signal chat to stop)
                     consecutive_offline = 0
+                    download_check_interval = 1  # Check download status every 1 second
+                    
                     while not download_complete.is_set():
-                        time.sleep(1)
+                        time.sleep(download_check_interval)
                         
-                        # Check if download is still running
+                        # Periodically check if threads are still alive
                         if not dl_thread.is_alive() and not download_complete.is_set():
                             logger.warning("Download thread ended without setting download_complete flag")
                             on_download_complete(False)
+                            break
                         
                         # If stream goes offline, this might be a good time to stop
                         try:
@@ -128,13 +133,31 @@ def archive_stream(parti_url):
                             logger.warning(f"Error checking live status: {e}")
                     
                     # Download is now complete, wait for chat thread to finish
-                    logger.info(f"Waiting for chat collection to complete (timeout: {CHAT_SHUTDOWN_TIMEOUT}s)...")
-                    chat_thread.join(timeout=CHAT_SHUTDOWN_TIMEOUT)
+                    # First, verify stop_event is set (just in case)
+                    if not stop_event.is_set():
+                        logger.warning("Stop event not set after download completion! Setting it now.")
+                        stop_event.set()
                     
+                    logger.info(f"Waiting for chat collection to complete (timeout: {CHAT_SHUTDOWN_TIMEOUT}s)...")
+                    
+                    # Use a polling approach rather than join() to improve responsiveness
+                    chat_start_wait = time.time()
+                    while chat_thread.is_alive() and (time.time() - chat_start_wait) < CHAT_SHUTDOWN_TIMEOUT:
+                        time.sleep(0.5)  # Check every half second
+                    
+                    # Check final status
                     if chat_thread.is_alive():
-                        logger.warning("Chat thread did not terminate in time")
+                        logger.warning("Chat thread did not terminate in time. Thread will be abandoned.")
+                        
+                        # Check if the chat json file exists - if not, we might want to wait a bit longer
+                        # as the thread could be in the process of saving
+                        final_chat_file = os.path.join(stream_dir, "chat.json")
+                        if not os.path.exists(final_chat_file):
+                            logger.info("No final chat file detected, waiting an additional 5 seconds...")
+                            time.sleep(5)
+                        
+                        # Note: Since we've set the thread as daemon, it won't prevent program exit
                         logger.info("Forcibly ending the current recording session...")
-                        # We'll let the thread continue running but move on in the main loop
                     else:
                         logger.info("Chat collection completed successfully")
                         
@@ -142,9 +165,8 @@ def archive_stream(parti_url):
                     logger.info("Interrupted by user, shutting down...")
                     stop_event.set()  # Signal threads to stop
                     
-                    # Wait briefly for threads to terminate
-                    for t in threads:
-                        t.join(timeout=5)
+                    # No need to wait for threads since they're daemons
+                    logger.info("Shutting down immediately. Daemon threads will be terminated.")
                     
                     # Re-raise to exit the main loop
                     raise KeyboardInterrupt()

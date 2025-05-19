@@ -103,9 +103,16 @@ def parti_chat(platform, username, path, stop_event=None):
     
     last_save_time = time.time()
     save_interval = 15  # Save every 15 seconds
+    
+    # Create a connection timeout - shorter than the archiver's join timeout
+    max_wait_time = 10  # Give up after 10 seconds when stop_event is set
+    
+    # Custom flags to help with graceful termination
+    force_exit = False
+    exit_timeout = None
         
     try:
-        with connect(PARTI_WS_URI, additional_headers=headers) as websocket:
+        with connect(PARTI_WS_URI, additional_headers=headers, open_timeout=10) as websocket:
             # Set a timeout so we can periodically check the stop_event
             websocket.timeout = 1.0  # 1 second timeout
             
@@ -114,7 +121,7 @@ def parti_chat(platform, username, path, stop_event=None):
             logger.info(f"Connected to chat for user {user_id}")
             
             # Process messages until told to stop
-            while not stop_event.is_set():
+            while not stop_event.is_set() and not force_exit:
                 try:
                     msg = websocket.recv()
                     logger.debug(f"Chat message received: {msg[:100]}...")  # Print first 100 chars
@@ -125,16 +132,46 @@ def parti_chat(platform, username, path, stop_event=None):
                     if current_time - last_save_time > save_interval:
                         save_partial_results()
                         last_save_time = current_time
+                    
+                    # If exit timeout is set, check if we've received messages during grace period
+                    if exit_timeout and current_time < exit_timeout:
+                        logger.info("Received message during exit grace period, continuing collection")
+                        exit_timeout = None  # Reset timeout
                         
                 except TimeoutError:
                     # This is expected due to our timeout - just continue and check stop_event
-                    # Also check if stream is still live as a backup exit condition
-                    if not isLive(user_id):
-                        logger.info("Stream is no longer live, preparing to exit chat collection")
-                        # Don't exit immediately, give it a few more tries to collect final messages
-                        if len(msgs) == 0 or time.time() - last_save_time > 30:
-                            logger.info("No recent messages, exiting chat collection")
+                    
+                    # Handle stop_event with a final timeout to ensure we exit
+                    if stop_event.is_set():
+                        if exit_timeout is None:
+                            # First time we've seen stop_event set, start timeout
+                            exit_timeout = time.time() + max_wait_time
+                            logger.info(f"Stop event detected, will exit in {max_wait_time} seconds if no new messages")
+                        elif time.time() > exit_timeout:
+                            # We've waited long enough
+                            logger.info("Exit timeout reached, terminating chat collection")
+                            force_exit = True
                             break
+                    
+                    # Also check if stream is still live as a backup exit condition
+                    try:
+                        if not isLive(user_id):
+                            logger.info("Stream is no longer live, preparing to exit chat collection")
+                            # If stop is already requested or we have no messages, exit immediately
+                            if stop_event.is_set() or len(msgs) == 0:
+                                force_exit = True
+                                break
+                                
+                            # Otherwise exit after a period of no activity
+                            no_activity_timeout = 30  # seconds
+                            if time.time() - last_save_time > no_activity_timeout:
+                                logger.info(f"No chat activity for {no_activity_timeout}s, exiting chat collection")
+                                force_exit = True
+                                break
+                    except Exception as e:
+                        logger.warning(f"Error checking if stream is live: {e}")
+                        # Continue despite error - we'll exit via stop_event if needed
+                    
                     continue
                 except Exception as e:
                     logger.error(f"Error in WebSocket connection: {e}")
@@ -144,6 +181,14 @@ def parti_chat(platform, username, path, stop_event=None):
         logger.error(f"Error establishing WebSocket connection: {e}")
         logger.debug(traceback.format_exc())
     finally:
+        # Log the final status
+        if force_exit:
+            logger.info("Chat collection terminated due to timeout or inactivity")
+        elif stop_event.is_set():
+            logger.info("Chat collection terminated due to stop event")
+        else:
+            logger.info("Chat collection terminated due to unexpected condition")
+            
         # Save all collected messages to file
         if msgs:
             # Try to save final results
@@ -161,6 +206,7 @@ def parti_chat(platform, username, path, stop_event=None):
         else:
             logger.warning("Chat monitoring stopped, no messages collected")
     
+    logger.info("Chat monitoring thread exiting")
     return msgs
 
 if __name__ == "__main__":
