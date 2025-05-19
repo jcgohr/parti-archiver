@@ -22,10 +22,9 @@ logging.basicConfig(
 logger = logging.getLogger("parti_archiver")
 
 # Constants
-DELAY = 15  # Seconds between checks for stream status
+DELAY = 60  # Seconds between checks for stream status
 CHAT_SHUTDOWN_TIMEOUT = 20  # Reduced from 60s to 20s since we've improved chat shutdown
 MAX_OFFLINE_CHECKS = 3  # Number of consecutive offline checks before considering stream ended
-POST_DOWNLOAD_WAIT = 180  # Wait 180 seconds after download completes before ending session
 
 def archive_stream(parti_url):
     """
@@ -130,19 +129,6 @@ def archive_stream(parti_url):
                         except Exception as e:
                             logger.warning(f"Error checking live status: {e}")
                     
-                    # Wait the specified time after download completes to allow for API lag
-                    logger.info(f"Download complete, waiting {POST_DOWNLOAD_WAIT} seconds to collect final messages...")
-                    
-                    # Wait for post-download period while still checking for stream status
-                    wait_start_time = time.time()
-                    while time.time() - wait_start_time < POST_DOWNLOAD_WAIT:
-                        # Sleep for a short period to not burn CPU
-                        time.sleep(1)
-                        
-                        # Check if the chat thread died for some reason
-                        if not chat_thread.is_alive():
-                            logger.warning("Chat thread ended unexpectedly during post-download wait")
-                            break
                     
                     # After wait period, signal the chat thread to stop
                     logger.info("Post-download wait period complete, will stop chat collection")
