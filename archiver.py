@@ -25,7 +25,7 @@ logger = logging.getLogger("parti_archiver")
 DELAY = 15  # Seconds between checks for stream status
 CHAT_SHUTDOWN_TIMEOUT = 20  # Reduced from 60s to 20s since we've improved chat shutdown
 MAX_OFFLINE_CHECKS = 3  # Number of consecutive offline checks before considering stream ended
-POST_DOWNLOAD_WAIT = 60  # Wait 60 seconds after download completes before ending session
+POST_DOWNLOAD_WAIT = 180  # Wait 180 seconds after download completes before ending session
 
 def archive_stream(parti_url):
     """
