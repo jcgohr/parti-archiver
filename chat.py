@@ -40,45 +40,26 @@ headers={
     "Upgrade": "websocket"
 }
 
-def safe_save_chat(msgs, filepath, is_partial=False):
-    """Save chat messages safely with error handling"""
+def save_chat(msgs, filepath):
+    """Simple direct save of chat messages to file"""
     try:
         # Make sure directory exists
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         
-        # First write to a temporary file
-        temp_path = f"{filepath}.tmp"
-        with open(temp_path, "w", encoding="utf-8") as chat_file:
+        # Write directly to the final file
+        with open(filepath, "w", encoding="utf-8") as chat_file:
             chat_file.write(json.dumps(msgs, indent=4, ensure_ascii=False))
-            # Make sure data is written to disk
-            chat_file.flush()
-            os.fsync(chat_file.fileno())
         
-        # Then rename to the final file (atomic operation)
-        os.replace(temp_path, filepath)
-        
-        file_type = "partial" if is_partial else "final"
-        logger.info(f"Successfully saved {len(msgs)} messages to {file_type} chat file: {filepath}")
+        logger.info(f"Saved {len(msgs)} messages to chat file: {filepath}")
         return True
     except Exception as e:
         logger.error(f"Error saving chat data to {filepath}: {e}")
         logger.debug(traceback.format_exc())
         return False
 
-def clean_up_partial_file(partial_file):
-    """Remove partial file after successful final save"""
-    try:
-        if os.path.exists(partial_file):
-            os.remove(partial_file)
-            logger.info(f"Removed partial chat file: {partial_file}")
-            return True
-    except Exception as e:
-        logger.warning(f"Failed to remove partial file {partial_file}: {e}")
-    return False
-
 def parti_chat(platform, username, path, stop_event=None):
     """
-    Monitor Parti chat with graceful termination support
+    Monitor Parti chat with immediate termination on stop signal
     
     Args:
         platform: The platform name
@@ -93,33 +74,12 @@ def parti_chat(platform, username, path, stop_event=None):
     if stop_event is None:
         stop_event = threading.Event()
     
-    # Define file paths
-    partial_file = os.path.join(path, "chat_partial.json")
+    # Define file path
     final_file = os.path.join(path, "chat.json")
     
-    # Save partial results periodically in case of crash
-    def save_partial_results():
-        return safe_save_chat(msgs, partial_file, is_partial=True)
-    
-    # Function to save current messages immediately
-    def save_immediate():
-        if msgs:
-            logger.info(f"Immediately saving {len(msgs)} messages on stop signal")
-            if safe_save_chat(msgs, final_file):
-                clean_up_partial_file(partial_file)
-                return True
-        return False
-    
+    # Save interval for backups (not atomic/partial saves)
     last_save_time = time.time()
-    save_interval = 15  # Save every 15 seconds
-    
-    # Create a connection timeout - shorter than the archiver's join timeout
-    max_wait_time = 10  # Give up after 10 seconds when stop_event is set
-    
-    # Custom flags to help with graceful termination
-    force_exit = False
-    exit_timeout = None
-    saved_on_stop = False
+    save_interval = 30  # Save backup every 30 seconds
         
     try:
         with connect(PARTI_WS_URI, additional_headers=headers, open_timeout=10) as websocket:
@@ -131,71 +91,38 @@ def parti_chat(platform, username, path, stop_event=None):
             logger.info(f"Connected to chat for user {user_id}")
             
             # Process messages until told to stop
-            while not stop_event.is_set() and not force_exit:
+            while not stop_event.is_set():
                 try:
                     msg = websocket.recv()
                     logger.debug(f"Chat message received: {msg[:100]}...")  # Print first 100 chars
                     msgs.append(json.loads(msg))
                     
-                    # Periodic save
+                    # Periodic backup save
                     current_time = time.time()
                     if current_time - last_save_time > save_interval:
-                        save_partial_results()
+                        save_chat(msgs, final_file)
                         last_save_time = current_time
-                    
-                    # If exit timeout is set, check if we've received messages during grace period
-                    if exit_timeout and current_time < exit_timeout:
-                        logger.info("Received message during exit grace period, continuing collection")
-                        exit_timeout = None  # Reset timeout
                         
                 except TimeoutError:
                     # This is expected due to our timeout - just continue and check stop_event
                     
-                    # Check if stop event was just set, and immediately save if it was
-                    if stop_event.is_set() and not saved_on_stop:
-                        # Immediately save the current messages when stop signal received
-                        saved_on_stop = save_immediate()
-                        
-                        if exit_timeout is None:
-                            # Start timeout for collecting any final messages
-                            exit_timeout = time.time() + max_wait_time
-                            logger.info(f"Stop event detected, will exit in {max_wait_time} seconds if no new messages")
-                            
-                            # If there are no messages yet, we can exit immediately
-                            if not msgs:
-                                logger.info("No messages collected, exiting immediately")
-                                force_exit = True
-                                break
-                    
-                    # Check if we've waited long enough after stop signal
-                    if exit_timeout and time.time() > exit_timeout:
-                        logger.info("Exit timeout reached, terminating chat collection")
-                        # Save one final time if we received any additional messages
-                        if not saved_on_stop or len(msgs) > 0:
-                            save_immediate()
-                        force_exit = True
+                    # Exit immediately if stop_event is set
+                    if stop_event.is_set():
+                        logger.info("Stop event detected, exiting chat collection immediately")
                         break
                     
                     # Also check if stream is still live as a backup exit condition
                     try:
                         if not isLive(user_id):
-                            logger.info("Stream is no longer live, preparing to exit chat collection")
-                            # If stop is already requested or we have no messages, exit immediately
-                            if stop_event.is_set() or len(msgs) == 0:
-                                # Save current messages if we haven't already
-                                if not saved_on_stop and msgs:
-                                    save_immediate()
-                                force_exit = True
+                            logger.info("Stream is no longer live, checking for activity")
+                            if len(msgs) == 0:
+                                logger.info("No messages collected, exiting immediately")
                                 break
                                 
-                            # Otherwise exit after a period of no activity
+                            # Exit after a period of no activity
                             no_activity_timeout = 30  # seconds
                             if time.time() - last_save_time > no_activity_timeout:
                                 logger.info(f"No chat activity for {no_activity_timeout}s, exiting chat collection")
-                                # Save before exiting
-                                if not saved_on_stop and msgs:
-                                    save_immediate()
-                                force_exit = True
                                 break
                     except Exception as e:
                         logger.warning(f"Error checking if stream is live: {e}")
@@ -205,38 +132,21 @@ def parti_chat(platform, username, path, stop_event=None):
                 except Exception as e:
                     logger.error(f"Error in WebSocket connection: {e}")
                     logger.debug(traceback.format_exc())
-                    # Try to save messages before breaking
-                    if msgs and not saved_on_stop:
-                        save_immediate()
                     break
     except Exception as e:
         logger.error(f"Error establishing WebSocket connection: {e}")
         logger.debug(traceback.format_exc())
     finally:
-        # Log the final status
-        if force_exit:
-            logger.info("Chat collection terminated due to timeout or inactivity")
-        elif stop_event.is_set():
-            logger.info("Chat collection terminated due to stop event")
-        else:
-            logger.info("Chat collection terminated due to unexpected condition")
-            
-        # Save all collected messages to file if not already saved
-        if msgs and not saved_on_stop:
+        # Save all collected messages to file
+        if msgs:
             # Try to save final results
-            if safe_save_chat(msgs, final_file):
-                # If final save succeeded, clean up the partial file
-                clean_up_partial_file(partial_file)
+            if save_chat(msgs, final_file):
                 logger.info(f"Successfully saved {len(msgs)} chat messages to final file")
             else:
                 # If saving to final file fails, try one more time with a different filename
                 backup_file = os.path.join(path, f"chat_backup_{int(time.time())}.json")
                 logger.warning(f"Failed to save to {final_file}, trying backup save to {backup_file}")
-                if safe_save_chat(msgs, backup_file):
-                    # If backup save succeeded, clean up the partial file
-                    clean_up_partial_file(partial_file)
-        elif saved_on_stop:
-            logger.info("Chat messages were already saved when stop signal was received")
+                save_chat(msgs, backup_file)
         else:
             logger.warning("Chat monitoring stopped, no messages collected")
     
