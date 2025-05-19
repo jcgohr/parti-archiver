@@ -75,9 +75,9 @@ def parti_chat(platform, username, path, stop_event=None):
         stop_event = threading.Event()
     
     # Define file path
-    final_file = os.path.join(path, "chat.json")
+    chat_file = os.path.join(path, "chat.json")
     
-    # Save interval for backups (not atomic/partial saves)
+    # Save interval for backups
     last_save_time = time.time()
     save_interval = 30  # Save backup every 30 seconds
         
@@ -100,34 +100,16 @@ def parti_chat(platform, username, path, stop_event=None):
                     # Periodic backup save
                     current_time = time.time()
                     if current_time - last_save_time > save_interval:
-                        save_chat(msgs, final_file)
+                        save_chat(msgs, chat_file)
                         last_save_time = current_time
                         
                 except TimeoutError:
-                    # This is expected due to our timeout - just continue and check stop_event
-                    
-                    # Exit immediately if stop_event is set
+                    # Check stop_event and exit immediately if set
                     if stop_event.is_set():
-                        logger.info("Stop event detected, exiting chat collection immediately")
+                        logger.info("Stop event detected, exiting immediately")
                         break
                     
-                    # Also check if stream is still live as a backup exit condition
-                    try:
-                        if not isLive(user_id):
-                            logger.info("Stream is no longer live, checking for activity")
-                            if len(msgs) == 0:
-                                logger.info("No messages collected, exiting immediately")
-                                break
-                                
-                            # Exit after a period of no activity
-                            no_activity_timeout = 30  # seconds
-                            if time.time() - last_save_time > no_activity_timeout:
-                                logger.info(f"No chat activity for {no_activity_timeout}s, exiting chat collection")
-                                break
-                    except Exception as e:
-                        logger.warning(f"Error checking if stream is live: {e}")
-                        # Continue despite error - we'll exit via stop_event if needed
-                    
+                    # Just continue to next iteration
                     continue
                 except Exception as e:
                     logger.error(f"Error in WebSocket connection: {e}")
@@ -137,16 +119,10 @@ def parti_chat(platform, username, path, stop_event=None):
         logger.error(f"Error establishing WebSocket connection: {e}")
         logger.debug(traceback.format_exc())
     finally:
-        # Save all collected messages to file
+        # Save all collected messages to file on exit
         if msgs:
-            # Try to save final results
-            if save_chat(msgs, final_file):
-                logger.info(f"Successfully saved {len(msgs)} chat messages to final file")
-            else:
-                # If saving to final file fails, try one more time with a different filename
-                backup_file = os.path.join(path, f"chat_backup_{int(time.time())}.json")
-                logger.warning(f"Failed to save to {final_file}, trying backup save to {backup_file}")
-                save_chat(msgs, backup_file)
+            save_chat(msgs, chat_file)
+            logger.info(f"Saved {len(msgs)} chat messages on exit")
         else:
             logger.warning("Chat monitoring stopped, no messages collected")
     
