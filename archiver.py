@@ -24,7 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger("parti_archiver")
 
 # Constants
-DELAY = 60  # Seconds between checks for stream status
+DELAY = 120  # Seconds between checks for stream status
 CHAT_SHUTDOWN_TIMEOUT = 20  # Reduced from 60s to 20s since we've improved chat shutdown
 MAX_OFFLINE_CHECKS = 3  # Number of consecutive offline checks before considering stream ended
 
