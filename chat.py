@@ -101,6 +101,15 @@ def parti_chat(platform, username, path, stop_event=None):
     def save_partial_results():
         return safe_save_chat(msgs, partial_file, is_partial=True)
     
+    # Function to save current messages immediately
+    def save_immediate():
+        if msgs:
+            logger.info(f"Immediately saving {len(msgs)} messages on stop signal")
+            if safe_save_chat(msgs, final_file):
+                clean_up_partial_file(partial_file)
+                return True
+        return False
+    
     last_save_time = time.time()
     save_interval = 15  # Save every 15 seconds
     
@@ -110,6 +119,7 @@ def parti_chat(platform, username, path, stop_event=None):
     # Custom flags to help with graceful termination
     force_exit = False
     exit_timeout = None
+    saved_on_stop = False
         
     try:
         with connect(PARTI_WS_URI, additional_headers=headers, open_timeout=10) as websocket:
@@ -141,17 +151,30 @@ def parti_chat(platform, username, path, stop_event=None):
                 except TimeoutError:
                     # This is expected due to our timeout - just continue and check stop_event
                     
-                    # Handle stop_event with a final timeout to ensure we exit
-                    if stop_event.is_set():
+                    # Check if stop event was just set, and immediately save if it was
+                    if stop_event.is_set() and not saved_on_stop:
+                        # Immediately save the current messages when stop signal received
+                        saved_on_stop = save_immediate()
+                        
                         if exit_timeout is None:
-                            # First time we've seen stop_event set, start timeout
+                            # Start timeout for collecting any final messages
                             exit_timeout = time.time() + max_wait_time
                             logger.info(f"Stop event detected, will exit in {max_wait_time} seconds if no new messages")
-                        elif time.time() > exit_timeout:
-                            # We've waited long enough
-                            logger.info("Exit timeout reached, terminating chat collection")
-                            force_exit = True
-                            break
+                            
+                            # If there are no messages yet, we can exit immediately
+                            if not msgs:
+                                logger.info("No messages collected, exiting immediately")
+                                force_exit = True
+                                break
+                    
+                    # Check if we've waited long enough after stop signal
+                    if exit_timeout and time.time() > exit_timeout:
+                        logger.info("Exit timeout reached, terminating chat collection")
+                        # Save one final time if we received any additional messages
+                        if not saved_on_stop or len(msgs) > 0:
+                            save_immediate()
+                        force_exit = True
+                        break
                     
                     # Also check if stream is still live as a backup exit condition
                     try:
@@ -159,6 +182,9 @@ def parti_chat(platform, username, path, stop_event=None):
                             logger.info("Stream is no longer live, preparing to exit chat collection")
                             # If stop is already requested or we have no messages, exit immediately
                             if stop_event.is_set() or len(msgs) == 0:
+                                # Save current messages if we haven't already
+                                if not saved_on_stop and msgs:
+                                    save_immediate()
                                 force_exit = True
                                 break
                                 
@@ -166,6 +192,9 @@ def parti_chat(platform, username, path, stop_event=None):
                             no_activity_timeout = 30  # seconds
                             if time.time() - last_save_time > no_activity_timeout:
                                 logger.info(f"No chat activity for {no_activity_timeout}s, exiting chat collection")
+                                # Save before exiting
+                                if not saved_on_stop and msgs:
+                                    save_immediate()
                                 force_exit = True
                                 break
                     except Exception as e:
@@ -176,6 +205,9 @@ def parti_chat(platform, username, path, stop_event=None):
                 except Exception as e:
                     logger.error(f"Error in WebSocket connection: {e}")
                     logger.debug(traceback.format_exc())
+                    # Try to save messages before breaking
+                    if msgs and not saved_on_stop:
+                        save_immediate()
                     break
     except Exception as e:
         logger.error(f"Error establishing WebSocket connection: {e}")
@@ -189,8 +221,8 @@ def parti_chat(platform, username, path, stop_event=None):
         else:
             logger.info("Chat collection terminated due to unexpected condition")
             
-        # Save all collected messages to file
-        if msgs:
+        # Save all collected messages to file if not already saved
+        if msgs and not saved_on_stop:
             # Try to save final results
             if safe_save_chat(msgs, final_file):
                 # If final save succeeded, clean up the partial file
@@ -203,6 +235,8 @@ def parti_chat(platform, username, path, stop_event=None):
                 if safe_save_chat(msgs, backup_file):
                     # If backup save succeeded, clean up the partial file
                     clean_up_partial_file(partial_file)
+        elif saved_on_stop:
+            logger.info("Chat messages were already saved when stop signal was received")
         else:
             logger.warning("Chat monitoring stopped, no messages collected")
     
