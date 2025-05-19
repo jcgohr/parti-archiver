@@ -10,17 +10,12 @@ import threading
 import time
 import traceback
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Configure logger - actual level will be set by archiver.py
 logger = logging.getLogger("chat_monitor")
 
-# Also configure websockets logger
+# WebSockets logger is too verbose, so keep it at WARNING level by default
 ws_logger = logging.getLogger("websockets")
-ws_logger.setLevel(logging.DEBUG)
-ws_logger.addHandler(logging.StreamHandler())
+ws_logger.setLevel(logging.WARNING)
 
 headers={
     # "Host": "ws-backend.parti.com",
@@ -94,7 +89,9 @@ def parti_chat(platform, username, path, stop_event=None):
             while not stop_event.is_set():
                 try:
                     msg = websocket.recv()
-                    logger.debug(f"Chat message received: {msg[:100]}...")  # Print first 100 chars
+                    if logger.level <= logging.DEBUG:
+                        logger.debug(f"Chat message received: {msg[:100]}...")  # Print first 100 chars in debug mode
+                    
                     msgs.append(json.loads(msg))
                     
                     # Periodic backup save
@@ -130,6 +127,39 @@ def parti_chat(platform, username, path, stop_event=None):
     return msgs
 
 if __name__ == "__main__":
-    test_dir = "test_chat_output"
-    os.makedirs(test_dir, exist_ok=True)
-    parti_chat("parti", "hairyape", test_dir)
+    # When running directly as a script
+    import sys
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Monitor Parti chat messages")
+    parser.add_argument("platform", help="Platform name (e.g., 'parti')")
+    parser.add_argument("username", help="Username to monitor")
+    parser.add_argument("--output", "-o", default="./chat_output", help="Output directory")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
+    
+    args = parser.parse_args()
+    
+    # Configure logging for direct script execution
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+        console = logging.StreamHandler()
+        console.setLevel(logging.DEBUG)
+        console.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        logger.addHandler(console)
+        
+        # Also enable websockets debug logging
+        ws_logger.setLevel(logging.DEBUG)
+        ws_console = logging.StreamHandler()
+        ws_console.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        ws_logger.addHandler(ws_console)
+    
+    # Create output directory
+    os.makedirs(args.output, exist_ok=True)
+    
+    print(f"Monitoring chat for {args.platform}/{args.username}, press Ctrl+C to stop")
+    
+    try:
+        parti_chat(args.platform, args.username, args.output)
+    except KeyboardInterrupt:
+        print("\nChat monitoring stopped by user")
+        sys.exit(0)

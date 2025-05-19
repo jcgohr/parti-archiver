@@ -4,11 +4,7 @@ import time
 import logging
 import traceback
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Configure logging - actual level will be set by archiver.py
 logger = logging.getLogger("video_downloader")
 
 # Constants
@@ -29,14 +25,14 @@ def setup_yt_dlp_options(path, retry_on_error=True):
     """
     options = {
         "paths": {"home": path},
-        "verbose": True,
+        "verbose": False,  # Keep yt-dlp quiet by default
         "format": "best",  # Use best quality available
         "outtmpl": "%(title)s.%(ext)s",
         "nocheckcertificate": True,
         "ignoreerrors": True,  # Skip unavailable videos in a playlist
-        "no_warnings": False,
+        "no_warnings": True,
         "geo_bypass": True,
-        "quiet": False,
+        "quiet": True,
         "no_color": False,
         "progress_hooks": [],  # Will be set in the download function
     }
@@ -114,6 +110,12 @@ def download_with_callback(link: str, path: str, completion_callback=None, retri
             options = setup_yt_dlp_options(path)
             options['progress_hooks'] = [progress_hook]
             
+            # Check log level to adjust yt-dlp verbosity
+            if logger.level <= logging.DEBUG:
+                options['verbose'] = True
+                options['quiet'] = False
+                options['no_warnings'] = False
+            
             # Create a YouTube DL instance
             dl = yt_dlp.YoutubeDL(options)
             
@@ -178,10 +180,23 @@ def download(link: str, path: str):
 if __name__ == "__main__":
     # Test the download function when this file is run directly
     import sys
-    if len(sys.argv) > 1:
-        url = sys.argv[1]
-        output_dir = sys.argv[2] if len(sys.argv) > 2 else "./download_test"
-        print(f"Testing download of {url} to {output_dir}")
-        download(url, output_dir)
-    else:
-        print("Usage: python video.py URL [OUTPUT_DIR]")
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Download video from URL")
+    parser.add_argument("url", help="URL to download")
+    parser.add_argument("--output", "-o", default="./download_test", help="Output directory")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
+    
+    args = parser.parse_args()
+    
+    # Configure console logger for direct script execution
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+        console = logging.StreamHandler()
+        console.setLevel(logging.DEBUG)
+        console.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        logger.addHandler(console)
+    
+    print(f"Downloading {args.url} to {args.output}")
+    result = download(args.url, args.output)
+    print(f"Download {'succeeded' if result else 'failed'}")

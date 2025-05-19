@@ -9,22 +9,56 @@ import sys
 import os
 import logging
 import traceback
+import argparse
 
-# Configure logging
+# Configure root logger first
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("parti_archiver.log")
+        logging.FileHandler("parti_archiver.log")  # Always log to file
     ]
 )
+
+# Get logger for this module
 logger = logging.getLogger("parti_archiver")
 
 # Constants
 DELAY = 60  # Seconds between checks for stream status
 CHAT_SHUTDOWN_TIMEOUT = 20  # Reduced from 60s to 20s since we've improved chat shutdown
 MAX_OFFLINE_CHECKS = 3  # Number of consecutive offline checks before considering stream ended
+
+def setup_logging(verbose):
+    """Configure logging based on verbosity level"""
+    # Root logger already set up with file handler
+    
+    # Define a console handler with appropriate level
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    
+    if verbose:
+        # In verbose mode, show all INFO level and above
+        console_handler.setLevel(logging.INFO)
+        # Also set DEBUG level for certain loggers
+        logging.getLogger("video_downloader").setLevel(logging.DEBUG)
+        logging.getLogger("chat_monitor").setLevel(logging.DEBUG)
+    else:
+        # In non-verbose mode, only show CRITICAL messages on the console
+        # This effectively silences most output while still logging to file
+        console_handler.setLevel(logging.CRITICAL)
+        
+        # Set specific levels for component loggers
+        logging.getLogger("video_downloader").setLevel(logging.INFO)
+        logging.getLogger("chat_monitor").setLevel(logging.INFO)
+    
+    # Add console handler to root logger
+    logging.getLogger().addHandler(console_handler)
+    
+    # Set parti_archiver logger level (our main module)
+    if verbose:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
 
 def archive_stream(parti_url):
     """
@@ -51,6 +85,7 @@ def archive_stream(parti_url):
                 timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
                 stream_dir = f"{username}_{timestamp}/"
                 os.makedirs(stream_dir, exist_ok=True)
+                print(f"Stream detected! Creating directory: {stream_dir}")  # Always show this
                 logger.info(f"Stream detected! Creating directory: {stream_dir}")
                 
                 # Events for thread coordination
@@ -97,6 +132,7 @@ def archive_stream(parti_url):
                 threads = [dl_thread, chat_thread]
                 
                 # Start each thread
+                print(f"Starting download for {username}...")  # Always show this
                 logger.info("Starting download and chat threads...")
                 for t in threads:
                     t.start()
@@ -129,7 +165,6 @@ def archive_stream(parti_url):
                         except Exception as e:
                             logger.warning(f"Error checking live status: {e}")
                     
-                    
                     # After wait period, signal the chat thread to stop
                     logger.info("Post-download wait period complete, will stop chat collection")
                     stop_event.set()
@@ -158,6 +193,8 @@ def archive_stream(parti_url):
                         logger.info("Forcibly ending the current recording session...")
                     else:
                         logger.info("Chat collection completed successfully")
+                    
+                    print(f"Download completed: {stream_dir}")  # Always show this
                         
                 except KeyboardInterrupt:
                     logger.info("Interrupted by user, shutting down...")
@@ -178,22 +215,42 @@ def archive_stream(parti_url):
             logger.info("Shutting down archiver...")
             break
         except Exception as e:
+            print(f"Error: {e}")  # Always show errors
             logger.error(f"Error in main archiver loop: {e}")
             logger.debug(traceback.format_exc())
             time.sleep(DELAY)  # Sleep to avoid rapid error loops
 
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description="Archive Parti.com livestreams (video and chat)")
+    
+    parser.add_argument("url", 
+                        help="URL of the Parti creator to monitor (e.g., https://parti.com/creator/parti/username)")
+    
+    parser.add_argument("-v", "--verbose", 
+                        action="store_true", 
+                        help="Enable verbose output with detailed logs")
+    
+    return parser.parse_args()
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python archiver.py <parti_url>")
-        sys.exit(1)
-        
-    parti_url = sys.argv[1]
+    # Parse command line arguments
+    args = parse_args()
+    
+    # Set up logging based on verbosity
+    setup_logging(args.verbose)
+    
+    # Display minimal startup info
+    print(f"Parti Archiver started for: {args.url}")
+    if not args.verbose:
+        print("Run with -v or --verbose for detailed output")
     
     try:
-        archive_stream(parti_url)
+        archive_stream(args.url)
     except KeyboardInterrupt:
         print("\nArchiver shut down by user")
     except Exception as e:
+        print(f"Fatal error: {e}")
         logger.critical(f"Fatal error: {e}")
         logger.debug(traceback.format_exc())
         sys.exit(1)
