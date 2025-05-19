@@ -1,0 +1,23 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# VS Code
+.vscode/
+
+# Downloaded content folders and data
+*_20*/
+*.har
+*.har.json
+*.mp4
+
+# Virtual Environment
+venv/
+env/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
