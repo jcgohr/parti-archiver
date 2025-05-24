@@ -109,6 +109,7 @@ def download_with_callback(link: str, path: str, completion_callback=None, retri
             # Configure options with the progress hook
             options = setup_yt_dlp_options(path)
             options['progress_hooks'] = [progress_hook]
+            # No special handling for 404 errors here, let normal error handling work
             
             # Check log level to adjust yt-dlp verbosity
             if logger.level <= logging.DEBUG:
@@ -128,26 +129,32 @@ def download_with_callback(link: str, path: str, completion_callback=None, retri
                     raise DownloadError("Could not extract info from URL")
             except Exception as e:
                 logger.error(f"Error extracting info: {e}")
+                # Log but don't do special handling for 404 errors
+                logger.error(f"Error extracting info: {e}")
                 raise DownloadError(f"Invalid URL or content unavailable: {e}")
             
             # Now proceed with the download
             logger.info(f"Starting download from {link} to {path}")
-            result = dl.download([link])
-            
-            # Check for successful download
-            if result == 0 and (download_finished or downloaded_bytes > 0):
-                logger.info(f"Download completed successfully to {path}")
-                download_success = True
-            else:
-                logger.warning(f"Download may have issues. yt-dlp return code: {result}")
+            try:
+                result = dl.download([link])
                 
-                # If we got some data but yt-dlp reported an error, still consider it successful
-                # This helps with partial downloads of streams that end during recording
-                if downloaded_bytes > 0:
-                    logger.info(f"Partial download saved ({downloaded_bytes/(1024*1024):.1f} MB)")
+                # Check for successful download
+                if result == 0 and (download_finished or downloaded_bytes > 0):
+                    logger.info(f"Download completed successfully to {path}")
                     download_success = True
                 else:
-                    raise DownloadError(f"Download failed with code {result}")
+                    logger.warning(f"Download may have issues. yt-dlp return code: {result}")
+                    
+                    # If we got some data but yt-dlp reported an error, still consider it successful
+                    # This helps with partial downloads of streams that end during recording
+                    if downloaded_bytes > 0:
+                        logger.info(f"Partial download saved ({downloaded_bytes/(1024*1024):.1f} MB)")
+                        download_success = True
+                    else:
+                        raise DownloadError(f"Download failed with code {result}")
+            except yt_dlp.utils.DownloadError as e:
+                logger.error(f"yt-dlp download error: {e}")
+                raise
             
         except Exception as e:
             last_error = str(e)

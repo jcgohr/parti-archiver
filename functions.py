@@ -4,7 +4,6 @@ import re
 
 def split_parti_url(link:str)->tuple[str,str]:
     segments=link[len("https://parti.com/creator/"):].split("/")
-    print(segments)
     if len(segments)>2:
         # this requires some strange url encoding, probably liable to break in the future
         return [segments[0]]+[segments[1]+quote_plus("#"+segments[2])]

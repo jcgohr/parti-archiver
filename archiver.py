@@ -7,6 +7,7 @@ import datetime
 import time
 import sys
 import os
+import shutil
 import logging
 import traceback
 import argparse
@@ -27,6 +28,50 @@ logger = logging.getLogger("parti_archiver")
 DELAY = 120  # Seconds between checks for stream status
 CHAT_SHUTDOWN_TIMEOUT = 20  # Reduced from 60s to 20s since we've improved chat shutdown
 MAX_OFFLINE_CHECKS = 3  # Number of consecutive offline checks before considering stream ended
+
+def is_directory_empty(directory_path):
+    """
+    Check if a directory is empty or contains only empty subdirectories.
+    
+    Args:
+        directory_path: Path to the directory to check
+        
+    Returns:
+        bool: True if directory is empty (or contains only empty directories), False otherwise
+    """
+    if not os.path.exists(directory_path):
+        return True
+        
+    # Check if there are any files
+    for root, dirs, files in os.walk(directory_path):
+        if files:  # If there are any files, it's not empty
+            return False
+    
+    return True
+
+def delete_directory(directory_path):
+    """
+    Delete a directory.
+    
+    Args:
+        directory_path: Path to the directory to delete
+        
+    Returns:
+        bool: True if directory was successfully deleted, False otherwise
+    """
+    if not directory_path or not os.path.exists(directory_path):
+        return True  # Nothing to delete
+        
+    logger.info(f"Deleting empty directory: {directory_path}")
+    print(f"Deleting empty directory: {directory_path}")  # Always show this
+    
+    try:
+        shutil.rmtree(directory_path)
+        logger.info(f"Successfully deleted directory: {directory_path}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to delete directory {directory_path}: {e}")
+        return False
 
 def setup_logging(verbose):
     """Configure logging based on verbosity level"""
@@ -73,6 +118,7 @@ def archive_stream(parti_url):
     offline_count = 0
     
     while True:
+        
         try:
             user_id = getUserId(platform, username)
             is_streaming = isLive(user_id)
@@ -111,6 +157,10 @@ def archive_stream(parti_url):
                         if not success:
                             logger.warning("Download reported failure")
                             on_download_complete(False)
+                    except Exception as e:
+                        logger.error(f"Unhandled exception in download thread: {e}")
+                        logger.debug(traceback.format_exc())
+                        on_download_complete(False)
                     except Exception as e:
                         logger.error(f"Unhandled exception in download thread: {e}")
                         logger.debug(traceback.format_exc())
@@ -194,6 +244,11 @@ def archive_stream(parti_url):
                     else:
                         logger.info("Chat collection completed successfully")
                     
+                    # Check if the download directory is empty and delete it if it is
+                    if is_directory_empty(stream_dir):
+                        logger.info(f"Directory {stream_dir} is empty, deleting it")
+                        delete_directory(stream_dir)
+                    
                     print(f"Download completed: {stream_dir}")  # Always show this
                         
                 except KeyboardInterrupt:
@@ -210,6 +265,8 @@ def archive_stream(parti_url):
                 offline_count += 1
                 logger.info(f"Streamer not online (check {offline_count}), sleeping for {DELAY} seconds")
                 time.sleep(DELAY)
+                
+                # No special handling needed here
                 
         except KeyboardInterrupt:
             logger.info("Shutting down archiver...")
