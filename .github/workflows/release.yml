@@ -1,95 +1,87 @@
-name: Build and Release parti-archiver
+name: Build and Release
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         include:
           - os: ubuntu-latest
+            artifact_name: parti-archiver
             asset_name: parti-archiver-linux
-            asset_path: ./dist/parti-archiver
+          - os: windows-latest
+            artifact_name: parti-archiver.exe
+            asset_name: parti-archiver-windows.exe
           - os: macos-latest
+            artifact_name: parti-archiver
             asset_name: parti-archiver-macos
-            asset_path: ./dist/parti-archiver
-    
+
+    runs-on: ${{ matrix.os }}
+
     steps:
-    - name: Checkout code
+    - name: Checkout repository
       uses: actions/checkout@v4
-      
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.11'  # Adjust version as needed
-        
-    - name: Install dependencies
+        python-version: '3.11'
+
+    - name: Clone yt-dlp repository
       run: |
-        python -m pip install --upgrade pip
-        pip install pyinstaller
-        # Install your project dependencies
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-        
-    - name: Build executable
+        git clone https://github.com/yt-dlp/yt-dlp.git yt-dlp-repo
+
+    - name: Install dependencies and build (Unix)
+      if: runner.os != 'Windows'
       run: |
-        # Replace 'archiver.py' with your main Python file
-        pyinstaller --onefile --name parti-archiver archiver.py
-      
+        cd yt-dlp-repo
+        python3 devscripts/install_deps.py --include pyinstaller
+        python3 devscripts/make_lazy_extractors.py
+        cp ../archiver.py .
+        python3 -m bundle.pyinstaller --onefile --name parti-archiver archiver.py
+
+    - name: Install dependencies and build (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        cd yt-dlp-repo
+        python devscripts/install_deps.py --include pyinstaller
+        python devscripts/make_lazy_extractors.py
+        copy ..\archiver.py .
+        python -m bundle.pyinstaller --onefile --name parti-archiver archiver.py
+
     - name: Upload artifact
       uses: actions/upload-artifact@v3
       with:
         name: ${{ matrix.asset_name }}
-        path: ${{ matrix.asset_path }}
+        path: yt-dlp-repo/dist/${{ matrix.artifact_name }}
 
   release:
     needs: build
     runs-on: ubuntu-latest
-    
+    if: github.ref == 'refs/heads/master'
+
     steps:
-    - name: Checkout code
+    - name: Checkout repository
       uses: actions/checkout@v4
-      
-    - name: Get commit SHA (short)
-      id: get_sha
-      run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-      
-    - name: Create release tag
-      id: create_tag
-      run: |
-        TAG_NAME="v$(date +'%Y%m%d')-${{ steps.get_sha.outputs.SHORT_SHA }}"
-        echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
-        git config user.name github-actions
-        git config user.email github-actions@github.com
-        git tag $TAG_NAME
-        git push origin $TAG_NAME
-      
+
     - name: Download all artifacts
       uses: actions/download-artifact@v3
-      
+
     - name: Create Release
       id: create_release
       uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${{ steps.create_tag.outputs.TAG_NAME }}
-        release_name: Release ${{ steps.create_tag.outputs.TAG_NAME }}
-        body: |
-          Automated release for commit ${{ github.sha }}
-          
-          Changes in this release:
-          ${{ github.event.head_commit.message }}
-          
-          Available executables:
-          - Linux (x64)
-          - macOS (x64)
+        tag_name: release-${{ github.sha }}
+        release_name: Release ${{ github.sha }}
         draft: false
         prerelease: false
-        
+
     - name: Upload Linux Release Asset
       uses: actions/upload-release-asset@v1
       env:
@@ -97,9 +89,19 @@ jobs:
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
         asset_path: ./parti-archiver-linux/parti-archiver
-        asset_name: parti-archiver
+        asset_name: parti-archiver-linux
         asset_content_type: application/octet-stream
-        
+
+    - name: Upload Windows Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./parti-archiver-windows.exe/parti-archiver.exe
+        asset_name: parti-archiver-windows.exe
+        asset_content_type: application/octet-stream
+
     - name: Upload macOS Release Asset
       uses: actions/upload-release-asset@v1
       env:
@@ -107,5 +109,5 @@ jobs:
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
         asset_path: ./parti-archiver-macos/parti-archiver
-        asset_name: parti-archiver
+        asset_name: parti-archiver-macos
         asset_content_type: application/octet-stream
