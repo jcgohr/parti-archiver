@@ -42,7 +42,7 @@ jobs:
         python3 devscripts/install_deps.py --include pyinstaller
         python3 devscripts/make_lazy_extractors.py
         cp ../archiver.py .
-        python3 -m bundle.pyinstaller --onefile --name parti-archiver archiver.py
+        python3 -m PyInstaller --onefile --name parti-archiver --additional-hooks-dir=yt_dlp/__pyinstaller --hidden-import=yt_dlp.compat._legacy --hidden-import=yt_dlp.compat._deprecated --hidden-import=yt_dlp.utils._legacy --hidden-import=yt_dlp.utils._deprecated archiver.py
 
     - name: Install dependencies and build (Windows)
       if: runner.os == 'Windows'
@@ -51,7 +51,7 @@ jobs:
         python devscripts/install_deps.py --include pyinstaller
         python devscripts/make_lazy_extractors.py
         copy ..\archiver.py .
-        python -m bundle.pyinstaller --onefile --name parti-archiver archiver.py
+        python -m PyInstaller --onefile --name parti-archiver --additional-hooks-dir=yt_dlp/__pyinstaller --hidden-import=yt_dlp.compat._legacy --hidden-import=yt_dlp.compat._deprecated --hidden-import=yt_dlp.utils._legacy --hidden-import=yt_dlp.utils._deprecated archiver.py
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
