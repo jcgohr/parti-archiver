@@ -4,6 +4,9 @@ on:
   push:
     branches: [ master ]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -41,7 +44,8 @@ jobs:
         cd yt-dlp-repo
         python3 devscripts/install_deps.py --include pyinstaller
         python3 devscripts/make_lazy_extractors.py
-        cp ../archiver.py .
+        # Copy all files from parent directory to maintain imports
+        cp -r ../* . || true
         python3 -m PyInstaller --onefile --name parti-archiver --additional-hooks-dir=yt_dlp/__pyinstaller --hidden-import=yt_dlp.compat._legacy --hidden-import=yt_dlp.compat._deprecated --hidden-import=yt_dlp.utils._legacy --hidden-import=yt_dlp.utils._deprecated archiver.py
 
     - name: Install dependencies and build (Windows)
@@ -50,7 +54,8 @@ jobs:
         cd yt-dlp-repo
         python devscripts/install_deps.py --include pyinstaller
         python devscripts/make_lazy_extractors.py
-        copy ..\archiver.py .
+        # Copy all files from parent directory to maintain imports
+        robocopy ..\ . /E /XD yt-dlp-repo || if ($lastexitcode -lt 8) { $global:LASTEXITCODE = 0 }
         python -m PyInstaller --onefile --name parti-archiver --additional-hooks-dir=yt_dlp/__pyinstaller --hidden-import=yt_dlp.compat._legacy --hidden-import=yt_dlp.compat._deprecated --hidden-import=yt_dlp.utils._legacy --hidden-import=yt_dlp.utils._deprecated archiver.py
 
     - name: Upload artifact
@@ -74,8 +79,6 @@ jobs:
     - name: Create Release
       id: create_release
       uses: softprops/action-gh-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: release-${{ github.sha }}
         name: Release ${{ github.sha }}
