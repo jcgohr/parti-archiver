@@ -105,7 +105,7 @@ def setup_logging(verbose):
     else:
         logger.setLevel(logging.INFO)
 
-def archive_stream(parti_url):
+def archive_stream(parti_url, base_dir="."):
     """
     Archive a Parti.com stream (video and chat)
     
@@ -129,7 +129,7 @@ def archive_stream(parti_url):
                 
                 # Create directory for this stream session
                 timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-                stream_dir = f"{username}_{timestamp}/"
+                stream_dir = os.path.join(base_dir, f"{username}_{timestamp}")
                 os.makedirs(stream_dir, exist_ok=True)
                 print(f"Stream detected! Creating directory: {stream_dir}")  # Always show this
                 logger.info(f"Stream detected! Creating directory: {stream_dir}")
@@ -288,6 +288,10 @@ def parse_args():
                         action="store_true", 
                         help="Enable verbose output with detailed logs")
     
+    parser.add_argument("-d", "--dir", 
+                        default=".", 
+                        help="Directory where streams should be stored (default: current directory)")
+    
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -303,7 +307,7 @@ if __name__ == "__main__":
         print("Run with -v or --verbose for detailed output")
     
     try:
-        archive_stream(args.url)
+        archive_stream(args.url, args.dir)
     except KeyboardInterrupt:
         print("\nArchiver shut down by user")
     except Exception as e:
