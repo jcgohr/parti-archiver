@@ -54,7 +54,7 @@ jobs:
         python -m bundle.pyinstaller --onefile --name parti-archiver archiver.py
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.asset_name }}
         path: yt-dlp-repo/dist/${{ matrix.artifact_name }}
@@ -69,45 +69,19 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Download all artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
 
     - name: Create Release
       id: create_release
-      uses: actions/create-release@v1
+      uses: softprops/action-gh-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: release-${{ github.sha }}
-        release_name: Release ${{ github.sha }}
+        name: Release ${{ github.sha }}
         draft: false
         prerelease: false
-
-    - name: Upload Linux Release Asset
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./parti-archiver-linux/parti-archiver
-        asset_name: parti-archiver-linux
-        asset_content_type: application/octet-stream
-
-    - name: Upload Windows Release Asset
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./parti-archiver-windows.exe/parti-archiver.exe
-        asset_name: parti-archiver-windows.exe
-        asset_content_type: application/octet-stream
-
-    - name: Upload macOS Release Asset
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./parti-archiver-macos/parti-archiver
-        asset_name: parti-archiver-macos
-        asset_content_type: application/octet-stream
+        files: |
+          ./parti-archiver-linux/parti-archiver
+          ./parti-archiver-windows.exe/parti-archiver.exe
+          ./parti-archiver-macos/parti-archiver
