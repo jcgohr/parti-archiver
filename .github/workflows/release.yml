@@ -1,0 +1,111 @@
+name: Build and Release parti-archiver
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            asset_name: parti-archiver-linux
+            asset_path: ./dist/parti-archiver
+          - os: macos-latest
+            asset_name: parti-archiver-macos
+            asset_path: ./dist/parti-archiver
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'  # Adjust version as needed
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+        # Install your project dependencies
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        
+    - name: Build executable
+      run: |
+        # Replace 'archiver.py' with your main Python file
+        pyinstaller --onefile --name parti-archiver archiver.py
+      
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.asset_name }}
+        path: ${{ matrix.asset_path }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Get commit SHA (short)
+      id: get_sha
+      run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      
+    - name: Create release tag
+      id: create_tag
+      run: |
+        TAG_NAME="v$(date +'%Y%m%d')-${{ steps.get_sha.outputs.SHORT_SHA }}"
+        echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
+        git config user.name github-actions
+        git config user.email github-actions@github.com
+        git tag $TAG_NAME
+        git push origin $TAG_NAME
+      
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+      
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.create_tag.outputs.TAG_NAME }}
+        release_name: Release ${{ steps.create_tag.outputs.TAG_NAME }}
+        body: |
+          Automated release for commit ${{ github.sha }}
+          
+          Changes in this release:
+          ${{ github.event.head_commit.message }}
+          
+          Available executables:
+          - Linux (x64)
+          - macOS (x64)
+        draft: false
+        prerelease: false
+        
+    - name: Upload Linux Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./parti-archiver-linux/parti-archiver
+        asset_name: parti-archiver
+        asset_content_type: application/octet-stream
+        
+    - name: Upload macOS Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./parti-archiver-macos/parti-archiver
+        asset_name: parti-archiver
+        asset_content_type: application/octet-stream
