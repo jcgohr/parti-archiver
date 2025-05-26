@@ -1,4 +1,4 @@
-name: Build and Release
+name: Build and Release parti-archiver
 
 on:
   push:
@@ -6,86 +6,92 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   build:
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest]
         include:
           - os: ubuntu-latest
-            artifact_name: parti-archiver
             asset_name: parti-archiver-linux
-          - os: windows-latest
-            artifact_name: parti-archiver.exe
-            asset_name: parti-archiver-windows.exe
+            asset_path: ./dist/parti-archiver
           - os: macos-latest
-            artifact_name: parti-archiver
             asset_name: parti-archiver-macos
-
-    runs-on: ${{ matrix.os }}
-
+            asset_path: ./dist/parti-archiver
+    
     steps:
-    - name: Checkout repository
+    - name: Checkout code
       uses: actions/checkout@v4
-
+      
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.11'
-
-    - name: Clone yt-dlp repository
+        python-version: '3.11'  # Adjust version as needed
+        
+    - name: Install dependencies
       run: |
-        git clone https://github.com/yt-dlp/yt-dlp.git yt-dlp-repo
-
-    - name: Install dependencies and build (Unix)
-      if: runner.os != 'Windows'
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+        # Install your project dependencies
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        
+    - name: Build executable
       run: |
-        cd yt-dlp-repo
-        python3 devscripts/install_deps.py --include pyinstaller
-        python3 devscripts/make_lazy_extractors.py
-        python3 -m PyInstaller --onefile --name parti-archiver --path=.. --additional-hooks-dir=yt_dlp/__pyinstaller --hidden-import=yt_dlp.compat._legacy --hidden-import=yt_dlp.compat._deprecated --hidden-import=yt_dlp.utils._legacy --hidden-import=yt_dlp.utils._deprecated ../archiver.py
-
-    - name: Install dependencies and build (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        cd yt-dlp-repo
-        python devscripts/install_deps.py --include pyinstaller
-        python devscripts/make_lazy_extractors.py
-        python -m PyInstaller --onefile --name parti-archiver --path=.. --additional-hooks-dir=yt_dlp/__pyinstaller --hidden-import=yt_dlp.compat._legacy --hidden-import=yt_dlp.compat._deprecated --hidden-import=yt_dlp.utils._legacy --hidden-import=yt_dlp.utils._deprecated ..\archiver.py
-
+        # Replace 'archiver.py' with your main Python file
+        pyinstaller --onefile --name parti-archiver archiver.py
+      
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.asset_name }}
-        path: yt-dlp-repo/dist/${{ matrix.artifact_name }}
+        path: ${{ matrix.asset_path }}
 
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/master'
-
+    
     steps:
-    - name: Checkout repository
+    - name: Checkout code
       uses: actions/checkout@v4
-
+      
+    - name: Get commit SHA (short)
+      id: get_sha
+      run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      
+    - name: Create release tag
+      id: create_tag
+      run: |
+        TAG_NAME="v$(date +'%Y%m%d-%H%M%S')-${{ steps.get_sha.outputs.SHORT_SHA }}"
+        echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
+        git config user.name github-actions
+        git config user.email github-actions@github.com
+        git tag $TAG_NAME
+        git push origin $TAG_NAME
+      
     - name: Download all artifacts
       uses: actions/download-artifact@v4
-
-    - name: List downloaded files (debug)
-      run: |
-        find . -name "parti-archiver*" -type f || true
-        ls -la || true
-
+      
     - name: Create Release
       id: create_release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: release-${{ github.sha }}
-        name: Release ${{ github.sha }}
-        draft: false
-        prerelease: false
-        files: |
-          parti-archiver-linux/parti-archiver
-          parti-archiver-windows.exe/parti-archiver.exe
-          parti-archiver-macos/parti-archiver
+      run: |
+        # Delete release if it exists
+        gh release delete ${{ steps.create_tag.outputs.TAG_NAME }} --yes || true
+        
+        # Create new release with assets
+        gh release create ${{ steps.create_tag.outputs.TAG_NAME }} \
+          --title "Release ${{ steps.create_tag.outputs.TAG_NAME }}" \
+          --notes "Automated release for commit ${{ github.sha }}
+
+        Changes in this release:
+        ${{ github.event.head_commit.message }}
+
+        Available executables:
+        - parti-archiver (Linux x64)  
+        - parti-archiver (macOS x64)" \
+          ./parti-archiver-linux/parti-archiver#parti-archiver-linux \
+          ./parti-archiver-macos/parti-archiver#parti-archiver-macos
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
