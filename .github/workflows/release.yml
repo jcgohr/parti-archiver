@@ -72,6 +72,16 @@ jobs:
     - name: Download all artifacts
       uses: actions/download-artifact@v4
 
+    - name: List downloaded files (debug)
+      run: |
+        find . -name "parti-archiver*" -type f || true
+        ls -la || true
+
+    - name: Rename executables
+      run: |
+        mv parti-archiver-linux/parti-archiver parti-archiver-linux/parti-archiver-linux
+        mv parti-archiver-macos/parti-archiver parti-archiver-macos/parti-archiver-macos
+
     - name: Create Release
       id: create_release
       uses: softprops/action-gh-release@v1
@@ -81,6 +91,6 @@ jobs:
         draft: false
         prerelease: false
         files: |
-          ./parti-archiver-linux/parti-archiver
-          ./parti-archiver-windows.exe/parti-archiver.exe
-          ./parti-archiver-macos/parti-archiver
+          parti-archiver-linux/parti-archiver-linux
+          parti-archiver-windows.exe/parti-archiver.exe
+          parti-archiver-macos/parti-archiver-macos
